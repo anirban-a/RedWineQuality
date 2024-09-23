@@ -3,7 +3,7 @@ import numpy as np
 import pandas as pd
 
 from sklearn.impute import SimpleImputer
-from sklearn.preprocessing import StandardScaler, OneHotEncoder
+from sklearn.preprocessing import StandardScaler, OneHotEncoder, LabelEncoder
 from sklearn.pipeline import Pipeline
 from sklearn.compose import ColumnTransformer, make_column_transformer
 from sklearn.base import BaseEstimator, TransformerMixin
@@ -113,32 +113,7 @@ mean_transform_cols = [
 ]
 
 
-early_stopping = EarlyStopping(monitor='val_accuracy', patience=10, restore_best_weights=True, mode='max')
 
-model = keras.Sequential([
-    layers.Dense(input_shape=[11], units = 121, activation='relu'),
-    layers.BatchNormalization(),
-#     layers.Dropout(0.3),
-    layers.Dense(input_shape=[11], units = 256, activation='relu'),
-    layers.BatchNormalization(),
-    layers.Dropout(0.3),
-    layers.Dense(input_shape=[11], units = 256, activation='relu'),
-    layers.BatchNormalization(),
-    layers.Dropout(0.3),
-    layers.Dense(units = 512, activation='relu'),
-    layers.BatchNormalization(),
-    layers.Dropout(0.4),
-    layers.Dense(units = 512, activation='relu'),
-    layers.BatchNormalization(),
-    layers.Dropout(0.3),
-    layers.Dense(units=6, activation='softmax')
-])
-
-model.compile(
-    optimizer='adam',
-    loss='categorical_crossentropy',
-    metrics=['accuracy']
-)
 
 preprocessor = ColumnTransformer(transformers=[
     ('boxcox', PowerTransformer(), power_transform_cols),
@@ -152,15 +127,46 @@ pipeline = Pipeline(steps=[
 ])
 
 encoder = OneHotEncoder(sparse_output=False)
+le = LabelEncoder()
 def one_hot_encode(y):
     return encoder.fit_transform(np.reshape(y, (-1,1)))
 
 
-y = data.loc[:,'quality']
-y = one_hot_encode(y)
+y = le.fit_transform(data.loc[:,'quality'])
+y = keras.utils.to_categorical(y, 6)
 X_train, X_test, y_train, y_test = train_test_split(X, y, random_state=0, train_size=0.8)
 X_train_t = pipeline.fit_transform(X_train)
 X_test_t = pipeline.transform(X_test)
+
+# MODEL
+
+early_stopping = EarlyStopping(monitor='val_accuracy', patience=10, restore_best_weights=True, mode='max')
+
+model = keras.Sequential()
+model.add(layers.Input(shape = [len(X.columns)])) # input layer
+
+model.add(layers.Dense(units = 16, activation = 'relu'))
+model.add(layers.BatchNormalization())
+model.add(layers.Dropout(0.3))
+
+model.add(layers.Dense(units = 8, activation = 'relu'))
+model.add(layers.BatchNormalization())
+model.add(layers.Dropout(0.3))
+
+
+model.add(layers.Dense(units = 8, activation = 'relu'))
+model.add(layers.BatchNormalization())
+model.add(layers.Dropout(0.3))
+
+# output layer
+model.add(layers.Dense(units = len(y_train[0]), activation = 'sigmoid'))
+
+
+model.compile(
+    optimizer='adam',
+    loss='categorical_crossentropy',
+    metrics=['accuracy']
+)
 
 history = model.fit(
     X_train_t, y_train,
@@ -170,18 +176,16 @@ history = model.fit(
     validation_split=0.2,
     shuffle=True,
     verbose=0)
+
 y_pred = model.predict(X_test_t)
 
 def transform_to_class(row):
-    class_=None
-    max_=-1
-    for i,j in zip(row, np.arange(0,6)):
-        if i>max_:
-            class_=j
-            max_=i
-    return class_+3
+    map_to_class = lambda row: max(zip(row,np.arange(len(row))), key=lambda x:x[0])[1]
+    r = np.zeros(len(row))
+    idx = map_to_class(row)
+    r[idx]=1
+    return r
 
-y_pred_class = [transform_to_class(i) for i in y_pred]
-y_test_class = [transform_to_class(i) for i in y_test]
+y_pred_t = np.array([transform_to_class(i) for i in y_pred])
 
-print(f"Prediction Accuracy Score: {accuracy_score(y_test_class, y_pred_class)}")
+print(f"Prediction Accuracy Score: {accuracy_score(y_test, y_pred_t)}")
