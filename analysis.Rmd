@@ -1,0 +1,141 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+
+```{r}
+library(hrbrthemes)
+library(dplyr)
+library(ggcorrplot)
+library(ggplot2)
+library(themis)
+library(keras)
+library(tensorflow)
+
+
+```
+
+```{r}
+df = read.csv('winequality-red.csv')
+df|>head()
+
+str(df)
+```
+```{r}
+normalize = function(column){
+  mu = mean(column)
+  std = sd(column)
+  scale((column-mu)/std)
+}
+```
+
+```{r}
+ggplot(df, aes(x=quality))+
+  geom_histogram(fill="#69b3a2", color="#e9ecef", alpha=0.9)+
+  xlab('Wine Quality')+
+  ylab('Count of the label')+
+  theme_ipsum()+
+  theme(
+      plot.title = element_text(size=15)
+    )
+```
+
+```{r}
+corr = df|>cor()
+ggcorrplot(corr)
+```
+
+```{r}
+new_df = df|>mutate(quality = as.factor(quality)) |> smote(var = 'quality')
+filtered_df = new_df |> mutate(id=row_number())
+train = filtered_df|>sample_frac(size = 0.8)
+test = anti_join(filtered_df, train, by = 'id')
+
+train = train|>select(-id)
+test = test|>select(-id)
+
+x_train = train|>select(-quality)|>sapply(normalize)
+x_test = test|>select(-quality)|>sapply(normalize)
+
+
+y_train = to_categorical(as.numeric(train$quality)-1)
+y_test = to_categorical(as.numeric(test$quality)-1)
+n_inputs = ncol(x_train)
+n_outputs = ncol(y_train)
+```
+
+```{r}
+model = keras::keras_model_sequential(layers=list(
+  layer_input(shape = c(n_inputs)),
+  layer_batch_normalization(),
+  
+  layer_dense(units=256, activation = 'relu'),
+  layer_batch_normalization(),
+  
+  layer_dense(units=512, activation = 'relu'),
+  layer_batch_normalization(),
+  
+  layer_dense(units=512, activation = 'relu'),
+  layer_batch_normalization(),
+
+  
+  layer_dense(units=64, activation = 'relu'),
+  layer_batch_normalization(),
+  
+
+  layer_dense(units=64, activation = 'relu'),
+  layer_batch_normalization(),
+  
+  layer_dense(units=64, activation = 'relu'),
+  layer_batch_normalization(),
+  
+  layer_dense(units=n_outputs, activation = 'relu'),
+  layer_batch_normalization(),
+  # layer_dropout(rate=0.3),
+  
+  layer_dense(units = n_outputs, activation = 'sigmoid')
+))|>compile(optimizer='adam', loss='categorical_crossentropy', metrics=c('accuracy'), run_eagerly = FALSE)
+```
+
+
+
+```{r}
+history = model|>fit(
+  as.matrix(x_train),as.matrix(y_train),
+  batch_size = 32,
+  epochs = 300,
+  callbacks = list(callback_early_stopping(patience = 10, restore_best_weights = TRUE, mode = 'max')),
+  validation_data = list(as.matrix(x_test), as.matrix(y_test)),
+  verbose = 0
+  )
+
+history_metrics = data.frame(history$metrics)
+```
+
+```{r}
+n = nrow(history_metrics)
+x_axis = seq(1:n)
+ggplot()+
+  geom_line(data=history_metrics, mapping = aes(x_axis, val_loss, color = "Validation Loss"), size=1)+
+  geom_line(data = history_metrics, mapping = aes(x_axis, loss, color = "Training Loss"), size=1)+
+  theme_classic()+
+  ylab("Loss")+
+  xlab("Epoch")+
+  scale_color_manual(values = c("Validation Loss" = "orange", "Training Loss" = "green")) +
+  labs(color = "Metrics")
+```
+
+```{r}
+ggplot()+
+  geom_line(data=history_metrics, mapping = aes(x_axis, val_accuracy, color="Validation Accuracy"),size=1)+
+  geom_line(data=history_metrics, mapping = aes(x_axis, accuracy, color = "Training Accuracy"), size=1)+
+  theme_classic()+
+  ylab("Accuracy")+
+  xlab("Epoch")+
+  scale_color_manual(values = c("Validation Accuracy"="orange", "Training Accuracy"="green"))+
+  labs(color="Metrics")
+
+print(history_metrics$val_accuracy|>max())
+```
+
